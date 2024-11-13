@@ -1,5 +1,3 @@
-#![allow(clippy::enum_glob_use)]
-
 use crate::error::{Error, PatternProblem};
 use std::{convert::TryFrom, str::FromStr};
 
@@ -55,7 +53,7 @@ macro_rules! pattern_enum {
 
         impl $name {
             /// The equivalent of the `ToString` trait, but for `&'static str`.
-            #[must_use] pub fn as_str(self) -> &'static str {
+            pub fn as_str(self) -> &'static str {
                 use self::$name::*;
                 match self {
                     $(
@@ -73,7 +71,8 @@ macro_rules! pattern_enum {
 
 /// The tokens which describe patterns involving DH calculations.
 ///
-/// See: <https://noiseprotocol.org/noise.html#handshake-patterns>
+/// See: https://noiseprotocol.org/noise.html#handshake-patterns
+#[allow(missing_docs)]
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(crate) enum DhToken {
     Ee,
@@ -84,7 +83,8 @@ pub(crate) enum DhToken {
 
 /// The tokens which describe message patterns.
 ///
-/// See: <https://noiseprotocol.org/noise.html#handshake-patterns>
+/// See: https://noiseprotocol.org/noise.html#handshake-patterns
+#[allow(missing_docs)]
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(crate) enum Token {
     E,
@@ -125,14 +125,12 @@ pattern_enum! {
 impl HandshakePattern {
     /// If the protocol is one-way only
     ///
-    /// See: <https://noiseprotocol.org/noise.html#one-way-handshake-patterns>
-    #[must_use]
+    /// See: https://noiseprotocol.org/noise.html#one-way-handshake-patterns
     pub fn is_oneway(self) -> bool {
         matches!(self, N | X | K)
     }
 
     /// Whether this pattern requires a long-term static key.
-    #[must_use]
     pub fn needs_local_static_key(self, initiator: bool) -> bool {
         if initiator {
             !matches!(self, N | NN | NK | NX | NK1 | NX1)
@@ -143,7 +141,7 @@ impl HandshakePattern {
 
     /// Whether this pattern demands a remote public key pre-message.
     #[rustfmt::skip]
-    #[must_use]    pub fn need_known_remote_pubkey(self, initiator: bool) -> bool {
+    pub fn need_known_remote_pubkey(self, initiator: bool) -> bool {
         if initiator {
             matches!(
                 self,
@@ -205,11 +203,7 @@ impl FromStr for HandshakeModifierList {
             let modifier_names = s.split('+');
             let mut modifiers = vec![];
             for modifier_name in modifier_names {
-                let modifier: HandshakeModifier = modifier_name.parse()?;
-                if modifiers.contains(&modifier) {
-                    return Err(Error::Pattern(PatternProblem::DuplicateModifier));
-                }
-                modifiers.push(modifier);
+                modifiers.push(modifier_name.parse()?);
             }
             Ok(HandshakeModifierList { list: modifiers })
         }
@@ -229,7 +223,6 @@ pub struct HandshakeChoice {
 
 impl HandshakeChoice {
     /// Whether the handshake choice includes one or more PSK modifiers.
-    #[must_use]
     pub fn is_psk(&self) -> bool {
         for modifier in &self.modifiers.list {
             if let HandshakeModifier::Psk(_) = *modifier {
@@ -240,7 +233,6 @@ impl HandshakeChoice {
     }
 
     /// Whether the handshake choice includes the fallback modifier.
-    #[must_use]
     pub fn is_fallback(&self) -> bool {
         self.modifiers.list.contains(&HandshakeModifier::Fallback)
     }
@@ -251,7 +243,7 @@ impl HandshakeChoice {
         self.modifiers.list.contains(&HandshakeModifier::Hfs)
     }
 
-    /// Parse and split a base `HandshakePattern` from its optional modifiers
+    /// Parse and split a base HandshakePattern from its optional modifiers
     fn parse_pattern_and_modifier(s: &str) -> Result<(HandshakePattern, &str), Error> {
         for i in (1..=4).rev() {
             if s.len() > i - 1 && s.is_char_boundary(i) {
@@ -281,7 +273,7 @@ pub(crate) type MessagePatterns = Vec<Vec<Token>>;
 
 /// The defined token patterns for a given handshake.
 ///
-/// See: <https://noiseprotocol.org/noise.html#handshake-patterns>
+/// See: https://noiseprotocol.org/noise.html#handshake-patterns
 #[derive(Debug)]
 pub(crate) struct HandshakeTokens {
     pub premsg_pattern_i: PremessagePatterns,
@@ -296,13 +288,9 @@ type Patterns = (PremessagePatterns, PremessagePatterns, MessagePatterns);
 impl<'a> TryFrom<&'a HandshakeChoice> for HandshakeTokens {
     type Error = Error;
 
-    // We're going to ignore the clippy warnings here about this function being too long because
-    // it's essentially a lookup table and not problematic complex logic.
     #[allow(clippy::cognitive_complexity)]
-    #[allow(clippy::too_many_lines)]
     fn try_from(handshake: &'a HandshakeChoice) -> Result<Self, Self::Error> {
         // Hfs cannot be combined with one-way handshake patterns
-        #[cfg(feature = "hfs")]
         check_hfs_and_oneway_conflict(handshake)?;
 
         #[rustfmt::skip]
@@ -499,9 +487,9 @@ impl<'a> TryFrom<&'a HandshakeChoice> for HandshakeTokens {
             ),
         };
 
-        for modifier in &handshake.modifiers.list {
+        for modifier in handshake.modifiers.list.iter() {
             match modifier {
-                HandshakeModifier::Psk(n) => apply_psk_modifier(&mut patterns, *n)?,
+                HandshakeModifier::Psk(n) => apply_psk_modifier(&mut patterns, *n),
                 #[cfg(feature = "hfs")]
                 HandshakeModifier::Hfs => apply_hfs_modifier(&mut patterns),
                 _ => return Err(PatternProblem::UnsupportedModifier.into()),
@@ -529,18 +517,21 @@ fn check_hfs_and_oneway_conflict(handshake: &HandshakeChoice) -> Result<(), Erro
     }
 }
 
-/// Given our PSK modifier, we inject the token at the appropriate place.
-fn apply_psk_modifier(patterns: &mut Patterns, n: u8) -> Result<(), Error> {
-    let tokens = patterns
-        .2
-        .get_mut((n as usize).saturating_sub(1))
-        .ok_or(Error::Pattern(PatternProblem::InvalidPsk))?;
-    if n == 0 {
-        tokens.insert(0, Token::Psk(n));
-    } else {
-        tokens.push(Token::Psk(n));
-    }
+#[cfg(not(feature = "hfs"))]
+fn check_hfs_and_oneway_conflict(_: &HandshakeChoice) -> Result<(), Error> {
     Ok(())
+}
+
+fn apply_psk_modifier(patterns: &mut Patterns, n: u8) {
+    match n {
+        0 => {
+            patterns.2[0].insert(0, Token::Psk(n));
+        },
+        _ => {
+            let i = (n as usize) - 1;
+            patterns.2[i].push(Token::Psk(n));
+        },
+    }
 }
 
 #[cfg(feature = "hfs")]

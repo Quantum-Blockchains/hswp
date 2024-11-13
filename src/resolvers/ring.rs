@@ -1,6 +1,6 @@
 use super::CryptoResolver;
 use crate::{
-    constants::{CIPHERKEYLEN, TAGLEN},
+    constants::TAGLEN,
     params::{CipherChoice, DHChoice, HashChoice},
     types::{Cipher, Dh, Hash, Random},
     Error,
@@ -13,7 +13,6 @@ use ring::{
 
 /// A resolver that chooses [ring](https://github.com/briansmith/ring)-backed
 /// primitives when available.
-#[allow(clippy::module_name_repetitions)]
 #[derive(Default)]
 pub struct RingResolver;
 
@@ -96,7 +95,7 @@ impl Cipher for CipherAESGCM {
         "AESGCM"
     }
 
-    fn set(&mut self, key: &[u8; CIPHERKEYLEN]) {
+    fn set(&mut self, key: &[u8]) {
         self.key = aead::LessSafeKey::new(UnboundKey::new(&aead::AES_256_GCM, key).unwrap());
     }
 
@@ -176,7 +175,7 @@ impl Cipher for CipherChaChaPoly {
         "ChaChaPoly"
     }
 
-    fn set(&mut self, key: &[u8; CIPHERKEYLEN]) {
+    fn set(&mut self, key: &[u8]) {
         self.key = LessSafeKey::new(UnboundKey::new(&aead::CHACHA20_POLY1305, key).unwrap());
     }
 

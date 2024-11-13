@@ -1,6 +1,3 @@
-#![allow(clippy::match_on_vec_items)]
-#![allow(clippy::enum_glob_use)]
-
 //! All structures related to Noise parameter definitions (cryptographic primitive choices, protocol
 //! patterns/names)
 
@@ -16,9 +13,9 @@ pub use self::patterns::{
 pub(crate) use self::patterns::{DhToken, HandshakeTokens, MessagePatterns, Token};
 
 /// I recommend you choose `Noise`.
+#[allow(missing_docs)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum BaseChoice {
-    /// Ole' faithful.
     Noise,
 }
 
@@ -34,13 +31,12 @@ impl FromStr for BaseChoice {
     }
 }
 
-/// Which Diffie-Hellman primitive to use. One of `25519` or `448`, per the spec.
+/// One of `25519` or `448`, per the spec.
+#[allow(missing_docs)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum DHChoice {
-    /// The Curve25519 ellpitic curve.
     Curve25519,
-    /// The Curve448 elliptic curve.
-    Curve448,
+    Ed448,
 }
 
 impl FromStr for DHChoice {
@@ -50,23 +46,19 @@ impl FromStr for DHChoice {
         use self::DHChoice::*;
         match s {
             "25519" => Ok(Curve25519),
-            "448" => Ok(Curve448),
+            "448" => Ok(Ed448),
             _ => Err(PatternProblem::UnsupportedDhType.into()),
         }
     }
 }
 
 /// One of `ChaChaPoly` or `AESGCM`, per the spec.
+#[allow(missing_docs)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum CipherChoice {
-    /// The ChaCha20Poly1305 AEAD.
     ChaChaPoly,
     #[cfg(feature = "xchachapoly")]
-    /// The XChaCha20Poly1305 AEAD, an extended nonce variant of ChaCha20Poly1305.
-    /// This variant is hidden behind a feature flag to highlight that it is not in the
-    /// official specification of the Noise Protocol.
     XChaChaPoly,
-    /// The AES-GCM AEAD.
     AESGCM,
 }
 
@@ -86,16 +78,12 @@ impl FromStr for CipherChoice {
 }
 
 /// One of the supported SHA-family or BLAKE-family hash choices, per the spec.
+#[allow(missing_docs)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum HashChoice {
-    /// The SHA-256 hash function.
     SHA256,
-    /// The SHA-512 hash function.
     SHA512,
-    /// The BLAKE2s hash function, designed to be more efficient on 8-bit to 32-bit
-    /// architectures.
     Blake2s,
-    /// The BLAKE2b hash function, designed to be more efficient on 64-bit architectures.
     Blake2b,
 }
 
@@ -116,9 +104,9 @@ impl FromStr for HashChoice {
 
 /// One of the supported Kems provided for unstable HFS extension.
 #[cfg(feature = "hfs")]
+#[allow(missing_docs)]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum KemChoice {
-    /// The 1024-bit Kyber variant.
     Kyber1024,
 }
 
@@ -137,7 +125,7 @@ impl FromStr for KemChoice {
 
 /// The set of choices (as specified in the Noise spec) that constitute a full protocol definition.
 ///
-/// See: [Chapter 8: Protocol names and modifiers](https://noiseprotocol.org/noise.html#protocol-names-and-modifiers).
+/// See: [Chapter 11: Protocol Names](http://noiseprotocol.org/noise.html#protocol-names).
 ///
 /// # Examples
 ///
@@ -148,30 +136,22 @@ impl FromStr for KemChoice {
 ///
 /// let params: NoiseParams = "Noise_XX_25519_AESGCM_SHA256".parse().unwrap();
 /// ```
+#[allow(missing_docs)]
 #[derive(PartialEq, Clone, Debug)]
-#[allow(clippy::module_name_repetitions)]
 pub struct NoiseParams {
-    /// The full pattern string.
     pub name:      String,
-    /// In this case, always `Noise`.
     pub base:      BaseChoice,
-    /// The pattern's handshake choice (e.g. `XX`).
     pub handshake: HandshakeChoice,
-    /// The pattern's DH choice (e.g. `25519`).
     pub dh:        DHChoice,
     #[cfg(feature = "hfs")]
-    /// The pattern's KEM choice (e.g. `Kyber1024`).
     pub kem:       Option<KemChoice>,
-    /// The pattern's cipher choice (e.g. `AESGCM`).
     pub cipher:    CipherChoice,
-    /// The pattern's hash choice (e.g. `SHA256`).
     pub hash:      HashChoice,
 }
 
 impl NoiseParams {
     #[cfg(not(feature = "hfs"))]
-    /// Construct a new `NoiseParams` via specifying enums directly.
-    #[must_use]
+    /// Construct a new NoiseParams via specifying enums directly.
     pub fn new(
         name: String,
         base: BaseChoice,
@@ -204,18 +184,14 @@ impl FromStr for NoiseParams {
     #[cfg(not(feature = "hfs"))]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut split = s.split('_');
-        let params = NoiseParams::new(
+        Ok(NoiseParams::new(
             s.to_owned(),
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
-        );
-        if split.next().is_some() {
-            return Err(PatternProblem::TooManyParameters.into());
-        }
-        Ok(params)
+        ))
     }
 
     #[cfg(feature = "hfs")]
@@ -242,9 +218,6 @@ impl FromStr for NoiseParams {
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
             split.next().ok_or(PatternProblem::TooFewParameters)?.parse()?,
         );
-        if split.next().is_some() {
-            return Err(PatternProblem::TooManyParameters.into());
-        }
 
         // Validate that a KEM is specified iff the hfs modifier is present
         if p.handshake.is_hfs() != p.kem.is_some() {
@@ -305,21 +278,8 @@ mod tests {
         let mods = p.handshake.modifiers.list;
         match (mods[0], mods[1], mods[2]) {
             (Psk(0), Psk(1), Psk(2)) => {},
-            _ => panic!("modifiers weren't as expected! actual: {mods:?}"),
+            _ => panic!("modifiers weren't as expected! actual: {:?}", mods),
         }
-    }
-
-    #[test]
-    fn test_duplicate_psk_mod() {
-        assert!("Noise_XXfallback+psk1_25519_AESGCM_SHA256".parse::<NoiseParams>().is_ok());
-        assert_eq!(
-            Error::Pattern(PatternProblem::DuplicateModifier),
-            "Noise_XXfallback+fallback_25519_AESGCM_SHA256".parse::<NoiseParams>().unwrap_err()
-        );
-        assert_eq!(
-            Error::Pattern(PatternProblem::DuplicateModifier),
-            "Noise_XXpsk1+psk1_25519_AESGCM_SHA256".parse::<NoiseParams>().unwrap_err()
-        );
     }
 
     #[test]
@@ -348,23 +308,5 @@ mod tests {
             Token::Psk(_) => {},
             _ => panic!("missing token!"),
         }
-    }
-
-    #[test]
-    fn test_invalid_psk_handshake() {
-        let p: NoiseParams = "Noise_XXpsk9_25519_AESGCM_SHA256".parse().unwrap();
-
-        assert_eq!(
-            Error::Pattern(PatternProblem::InvalidPsk),
-            HandshakeTokens::try_from(&p.handshake).unwrap_err()
-        );
-    }
-
-    #[test]
-    fn test_extraneous_string_data() {
-        assert_eq!(
-            Error::Pattern(PatternProblem::TooManyParameters),
-            "Noise_XXpsk0_25519_AESGCM_SHA256_HackThePlanet".parse::<NoiseParams>().unwrap_err()
-        );
     }
 }

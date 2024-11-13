@@ -4,13 +4,13 @@ description = "A pure-rust implementation of the Noise Protocol Framework"
 homepage = "https://github.com/mcginty/snow"
 documentation = "https://docs.rs/snow/"
 repository = "https://github.com/mcginty/snow"
-version = "0.9.0"
-authors = ["Jake McGinty <me@jakebot.org>", "trevp"]
+version = "0.9.2"
+authors = ["Jake McGinty <me@jake.su>", "trevp"]
 license = "Apache-2.0 OR MIT"
 categories = ["cryptography"]
 readme = "README.md"
 keywords = ["noise", "protocol", "crypto"]
-edition = "2021"
+edition = "2018"
 
 # This is slightly mumbo-jumboey, but in short:
 # Features with a -resolver suffix simply enables the existence of a specific resolver,
@@ -41,29 +41,30 @@ rand_core = { version = "0.6", features = ["std", "getrandom"] }
 subtle = "2.4"
 
 # default crypto provider
-aes-gcm = { version = "0.10", optional = true }
-chacha20poly1305 = { version = "0.10", optional = true }
+aes-gcm = { version = "0.9", optional = true }
+chacha20poly1305 = { version = "0.9", optional = true }
 blake2 = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
-curve25519-dalek = { version = "4", optional = true }
+curve25519-dalek = { version = "=4.0.0-rc.1", optional = true }
 
-pqcrypto-kyber = { version = "0.8", optional = true }
+pqcrypto-kyber = { version = "0.7", optional = true }
 pqcrypto-traits = { version = "0.3", optional = true }
 
 # ring crypto provider
-ring = { version = "0.17", optional = true, features = ["std"] }
+ring = { version = "^0.16.2", optional = true, features = ["std"] }
 # libsodium crypto provider
 sodiumoxide = { version = "0.2", optional = true }
 byteorder = { version = "1.4", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+clap = "3"
+criterion = "0.3"
 serde = "1.0"
 serde_json = "1.0"
 serde_derive = "1.0"
 hex = "0.4"
 lazy_static = "1.4"
-x25519-dalek = "2.0"
+x25519-dalek = "1"
 rand = "0.8"
 
 [build-dependencies]

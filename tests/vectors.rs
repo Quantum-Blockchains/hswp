@@ -18,39 +18,38 @@ use std::{
     fmt,
     fs::{File, OpenOptions},
     io::Read,
-    marker::PhantomData,
     ops::Deref,
 };
 
 #[derive(Clone)]
-struct HexBytes<T> {
+struct HexBytes {
     original: String,
-    payload:  T,
+    payload:  Vec<u8>,
 }
 
-impl<T: AsRef<[u8]>> From<T> for HexBytes<T> {
-    fn from(payload: T) -> Self {
+impl From<Vec<u8>> for HexBytes {
+    fn from(payload: Vec<u8>) -> Self {
         Self { original: hex::encode(&payload), payload }
     }
 }
 
-impl<T> Deref for HexBytes<T> {
-    type Target = T;
+impl Deref for HexBytes {
+    type Target = Vec<u8>;
 
     fn deref(&self) -> &Self::Target {
         &self.payload
     }
 }
 
-impl<T> fmt::Debug for HexBytes<T> {
+impl fmt::Debug for HexBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.original)
     }
 }
 
-struct HexBytesVisitor<T: AsRef<[u8]>>(PhantomData<T>);
-impl<'de, T: AsRef<[u8]> + FromHex> Visitor<'de> for HexBytesVisitor<T> {
-    type Value = HexBytes<T>;
+struct HexBytesVisitor;
+impl<'de> Visitor<'de> for HexBytesVisitor {
+    type Value = HexBytes;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "a hex string")
@@ -60,22 +59,22 @@ impl<'de, T: AsRef<[u8]> + FromHex> Visitor<'de> for HexBytesVisitor<T> {
     where
         E: de::Error,
     {
-        let bytes =
-            T::from_hex(s).map_err(|_| de::Error::invalid_value(Unexpected::Str(s), &self))?;
+        let bytes = Vec::<u8>::from_hex(s)
+            .map_err(|_| de::Error::invalid_value(Unexpected::Str(s), &self))?;
         Ok(HexBytes { original: s.to_owned(), payload: bytes })
     }
 }
 
-impl<'de, T: AsRef<[u8]> + FromHex> Deserialize<'de> for HexBytes<T> {
-    fn deserialize<D>(deserializer: D) -> Result<HexBytes<T>, D::Error>
+impl<'de> Deserialize<'de> for HexBytes {
+    fn deserialize<D>(deserializer: D) -> Result<HexBytes, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_str(HexBytesVisitor(Default::default()))
+        deserializer.deserialize_str(HexBytesVisitor)
     }
 }
 
-impl<T: AsRef<[u8]>> Serialize for HexBytes<T> {
+impl Serialize for HexBytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -86,8 +85,8 @@ impl<T: AsRef<[u8]>> Serialize for HexBytes<T> {
 
 #[derive(Serialize, Deserialize)]
 struct TestMessage {
-    payload:    HexBytes<Vec<u8>>,
-    ciphertext: HexBytes<Vec<u8>>,
+    payload:    HexBytes,
+    ciphertext: HexBytes,
 }
 
 impl fmt::Debug for TestMessage {
@@ -115,29 +114,29 @@ struct TestVector {
     #[serde(skip_serializing_if = "Option::is_none")]
     fallback_pattern: Option<String>,
 
-    init_prologue: HexBytes<Vec<u8>>,
+    init_prologue: HexBytes,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    init_psks: Option<Vec<HexBytes<[u8; 32]>>>,
+    init_psks: Option<Vec<HexBytes>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    init_static: Option<HexBytes<Vec<u8>>>,
+    init_static: Option<HexBytes>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    init_ephemeral: Option<HexBytes<Vec<u8>>>,
+    init_ephemeral: Option<HexBytes>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    init_remote_static: Option<HexBytes<Vec<u8>>>,
+    init_remote_static: Option<HexBytes>,
 
-    resp_prologue:      HexBytes<Vec<u8>>,
+    resp_prologue:      HexBytes,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resp_psks:          Option<Vec<HexBytes<[u8; 32]>>>,
+    resp_psks:          Option<Vec<HexBytes>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resp_static:        Option<HexBytes<Vec<u8>>>,
+    resp_static:        Option<HexBytes>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resp_ephemeral:     Option<HexBytes<Vec<u8>>>,
+    resp_ephemeral:     Option<HexBytes>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    resp_remote_static: Option<HexBytes<Vec<u8>>>,
+    resp_remote_static: Option<HexBytes>,
 
     messages: Vec<TestMessage>,
 }
@@ -157,8 +156,8 @@ fn build_session_pair(vector: &TestVector) -> Result<(HandshakeState, HandshakeS
         if let (&Some(ref ipsks), &Some(ref rpsks)) = (&vector.init_psks, &vector.resp_psks) {
             for modifier in params.handshake.modifiers.list {
                 if let HandshakeModifier::Psk(n) = modifier {
-                    init_builder = init_builder.psk(n, &*ipsks[psk_index]).unwrap();
-                    resp_builder = resp_builder.psk(n, &*rpsks[psk_index]).unwrap();
+                    init_builder = init_builder.psk(n, &*ipsks[psk_index]);
+                    resp_builder = resp_builder.psk(n, &*rpsks[psk_index]);
                     psk_index += 1;
                 }
             }
@@ -168,16 +167,16 @@ fn build_session_pair(vector: &TestVector) -> Result<(HandshakeState, HandshakeS
     }
 
     if let Some(ref init_s) = vector.init_static {
-        init_builder = init_builder.local_private_key(&*init_s).unwrap();
+        init_builder = init_builder.local_private_key(&*init_s);
     }
     if let Some(ref resp_s) = vector.resp_static {
-        resp_builder = resp_builder.local_private_key(&*resp_s).unwrap();
+        resp_builder = resp_builder.local_private_key(&*resp_s);
     }
     if let Some(ref init_remote_static) = vector.init_remote_static {
-        init_builder = init_builder.remote_public_key(&*init_remote_static).unwrap();
+        init_builder = init_builder.remote_public_key(&*init_remote_static);
     }
     if let Some(ref resp_remote_static) = vector.resp_remote_static {
-        resp_builder = resp_builder.remote_public_key(&*resp_remote_static).unwrap();
+        resp_builder = resp_builder.remote_public_key(&*resp_remote_static);
     }
     if let Some(ref init_e) = vector.init_ephemeral {
         init_builder = init_builder.fixed_ephemeral_key_for_testing_only(&*init_e);
@@ -188,12 +187,10 @@ fn build_session_pair(vector: &TestVector) -> Result<(HandshakeState, HandshakeS
 
     let init = init_builder
         .prologue(&vector.init_prologue)
-        .unwrap()
         .build_initiator()
         .map_err(|e| format!("{:?}", e))?;
     let resp = resp_builder
         .prologue(&vector.resp_prologue)
-        .unwrap()
         .build_responder()
         .map_err(|e| format!("{:?}", e))?;
 
@@ -267,7 +264,7 @@ fn test_vectors_from_json(json: &str) {
     for vector in test_vectors.vectors {
         let params: NoiseParams = vector.protocol_name.parse().unwrap();
 
-        if params.dh == DHChoice::Curve448 {
+        if params.dh == DHChoice::Ed448 {
             ignored += 1;
             continue;
         }
@@ -308,13 +305,6 @@ fn test_vectors_from_json(json: &str) {
     }
 }
 
-fn random_slice<const N: usize>() -> [u8; N] {
-    let mut v = [0u8; N];
-    let mut rng = rand::thread_rng();
-    rng.fill_bytes(&mut v);
-    v
-}
-
 fn random_vec(size: usize) -> Vec<u8> {
     let mut v = vec![0u8; size];
     let mut rng = rand::thread_rng();
@@ -348,35 +338,35 @@ fn generate_vector(params: NoiseParams) -> TestVector {
     re = resp_b.generate_keypair().unwrap();
 
     for _ in 0..get_psks_count(&params) {
-        let v = random_slice::<32>();
-        psks_hex.push(v.into());
+        let v = random_vec(32);
+        psks_hex.push(v.clone().into());
         psks.push(v);
     }
 
     let mut psk_index = 0;
     for modifier in params.handshake.modifiers.list {
         if let HandshakeModifier::Psk(n) = modifier {
-            init_b = init_b.psk(n, &psks[psk_index]).unwrap();
-            resp_b = resp_b.psk(n, &psks[psk_index]).unwrap();
+            init_b = init_b.psk(n, &psks[psk_index]);
+            resp_b = resp_b.psk(n, &psks[psk_index]);
             psk_index += 1;
         }
     }
     init_b = init_b.fixed_ephemeral_key_for_testing_only(&ie.private);
-    init_b = init_b.prologue(&prologue).unwrap();
+    init_b = init_b.prologue(&prologue);
     if params.handshake.pattern.needs_local_static_key(true) {
-        init_b = init_b.local_private_key(&is.private).unwrap();
+        init_b = init_b.local_private_key(&is.private);
     }
     if params.handshake.pattern.need_known_remote_pubkey(true) {
-        init_b = init_b.remote_public_key(&rs.public).unwrap();
+        init_b = init_b.remote_public_key(&rs.public);
     }
 
     resp_b = resp_b.fixed_ephemeral_key_for_testing_only(&re.private);
-    resp_b = resp_b.prologue(&prologue).unwrap();
+    resp_b = resp_b.prologue(&prologue);
     if params.handshake.pattern.needs_local_static_key(false) {
-        resp_b = resp_b.local_private_key(&rs.private).unwrap();
+        resp_b = resp_b.local_private_key(&rs.private);
     }
     if params.handshake.pattern.need_known_remote_pubkey(false) {
-        resp_b = resp_b.remote_public_key(&is.public).unwrap();
+        resp_b = resp_b.remote_public_key(&is.public);
     }
 
     let mut init = init_b.build_initiator().unwrap();

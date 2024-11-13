@@ -33,9 +33,6 @@ pub trait Dh: Send + Sync {
     fn privkey(&self) -> &[u8];
 
     /// Calculate a Diffie-Hellman exchange.
-    ///
-    /// # Errors
-    /// Returns `Error::Dh` in the event that the Diffie-Hellman failed.
     fn dh(&self, pubkey: &[u8], out: &mut [u8]) -> Result<(), Error>;
 }
 
@@ -45,15 +42,12 @@ pub trait Cipher: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Set the key
-    fn set(&mut self, key: &[u8; CIPHERKEYLEN]);
+    fn set(&mut self, key: &[u8]);
 
     /// Encrypt (with associated data) a given plaintext.
     fn encrypt(&self, nonce: u64, authtext: &[u8], plaintext: &[u8], out: &mut [u8]) -> usize;
 
     /// Decrypt (with associated data) a given ciphertext.
-    ///
-    /// # Errors
-    /// Returns `Error::Decrypt` in the event that the decryption failed.
     fn decrypt(
         &self,
         nonce: u64,
@@ -68,12 +62,7 @@ pub trait Cipher: Send + Sync {
         let mut ciphertext = [0; CIPHERKEYLEN + TAGLEN];
         let ciphertext_len = self.encrypt(u64::MAX, &[], &[0; CIPHERKEYLEN], &mut ciphertext);
         assert_eq!(ciphertext_len, ciphertext.len());
-
-        // TODO(mcginty): use `split_array_ref` once stable to avoid memory inefficiency
-        let mut key = [0u8; CIPHERKEYLEN];
-        key.copy_from_slice(&ciphertext[..CIPHERKEYLEN]);
-
-        self.set(&key);
+        self.set(&ciphertext[..CIPHERKEYLEN]);
     }
 }
 

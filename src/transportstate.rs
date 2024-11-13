@@ -1,6 +1,6 @@
 use crate::{
     cipherstate::CipherStates,
-    constants::{CIPHERKEYLEN, MAXDHLEN, MAXMSGLEN, TAGLEN},
+    constants::{MAXDHLEN, MAXMSGLEN, TAGLEN},
     error::{Error, StateProblem},
     handshakestate::HandshakeState,
     params::HandshakePattern,
@@ -40,15 +40,14 @@ impl TransportState {
     /// doesn't necessitate a remote static key, *or* if the remote
     /// static key is not yet known (as can be the case in the `XX`
     /// pattern, for example).
-    #[must_use]
     pub fn get_remote_static(&self) -> Option<&[u8]> {
         self.rs.get().map(|rs| &rs[..self.dh_len])
     }
 
     /// Construct a message from `payload` (and pending handshake tokens if in handshake state),
-    /// and write it to the `message` buffer.
+    /// and writes it to the `output` buffer.
     ///
-    /// Returns the number of bytes written to `message`.
+    /// Returns the size of the written payload.
     ///
     /// # Errors
     ///
@@ -66,59 +65,52 @@ impl TransportState {
         cipher.encrypt(payload, message)
     }
 
-    /// Read a noise message from `message` and write the payload to the `payload` buffer.
+    /// Reads a noise message from `input`
     ///
-    /// Returns the number of bytes written to `payload`.
+    /// Returns the size of the payload written to `payload`.
     ///
     /// # Errors
-    /// Will result in `Error::Input` if the message is more than 65535 bytes.
     ///
     /// Will result in `Error::Decrypt` if the contents couldn't be decrypted and/or the
     /// authentication tag didn't verify.
     ///
     /// Will result in `StateProblem::Exhausted` if the max nonce overflows.
-    pub fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
-        if message.len() > MAXMSGLEN {
-            Err(Error::Input)
-        } else if self.initiator && self.pattern.is_oneway() {
-            Err(StateProblem::OneWay.into())
-        } else {
-            let cipher =
-                if self.initiator { &mut self.cipherstates.1 } else { &mut self.cipherstates.0 };
-            cipher.decrypt(message, payload)
+    pub fn read_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
+        if self.initiator && self.pattern.is_oneway() {
+            return Err(StateProblem::OneWay.into());
         }
+        let cipher =
+            if self.initiator { &mut self.cipherstates.1 } else { &mut self.cipherstates.0 };
+
+        cipher.decrypt(payload, message)
     }
 
-    /// Generate a new key for the egress symmetric cipher according to Section 4.2
+    /// Generates a new key for the egress symmetric cipher according to Section 4.2
     /// of the Noise Specification. Synchronizing timing of rekey between initiator and
     /// responder is the responsibility of the application, as described in Section 11.3
     /// of the Noise Specification.
     pub fn rekey_outgoing(&mut self) {
         if self.initiator {
-            self.cipherstates.rekey_initiator();
+            self.cipherstates.rekey_initiator()
         } else {
-            self.cipherstates.rekey_responder();
+            self.cipherstates.rekey_responder()
         }
     }
 
-    /// Generate a new key for the ingress symmetric cipher according to Section 4.2
+    /// Generates a new key for the ingress symmetric cipher according to Section 4.2
     /// of the Noise Specification. Synchronizing timing of rekey between initiator and
     /// responder is the responsibility of the application, as described in Section 11.3
     /// of the Noise Specification.
     pub fn rekey_incoming(&mut self) {
         if self.initiator {
-            self.cipherstates.rekey_responder();
+            self.cipherstates.rekey_responder()
         } else {
-            self.cipherstates.rekey_initiator();
+            self.cipherstates.rekey_initiator()
         }
     }
 
     /// Set a new key for the one or both of the initiator-egress and responder-egress symmetric ciphers.
-    pub fn rekey_manually(
-        &mut self,
-        initiator: Option<&[u8; CIPHERKEYLEN]>,
-        responder: Option<&[u8; CIPHERKEYLEN]>,
-    ) {
+    pub fn rekey_manually(&mut self, initiator: Option<&[u8]>, responder: Option<&[u8]>) {
         if let Some(key) = initiator {
             self.rekey_initiator_manually(key);
         }
@@ -128,16 +120,16 @@ impl TransportState {
     }
 
     /// Set a new key for the initiator-egress symmetric cipher.
-    pub fn rekey_initiator_manually(&mut self, key: &[u8; CIPHERKEYLEN]) {
-        self.cipherstates.rekey_initiator_manually(key);
+    pub fn rekey_initiator_manually(&mut self, key: &[u8]) {
+        self.cipherstates.rekey_initiator_manually(key)
     }
 
     /// Set a new key for the responder-egress symmetric cipher.
-    pub fn rekey_responder_manually(&mut self, key: &[u8; CIPHERKEYLEN]) {
-        self.cipherstates.rekey_responder_manually(key);
+    pub fn rekey_responder_manually(&mut self, key: &[u8]) {
+        self.cipherstates.rekey_responder_manually(key)
     }
 
-    /// Set the forthcoming *inbound* nonce value. Useful for using noise on lossy transports.
+    /// Sets the *receiving* CipherState's nonce. Useful for using noise on lossy transports.
     pub fn set_receiving_nonce(&mut self, nonce: u64) {
         if self.initiator {
             self.cipherstates.1.set_nonce(nonce);
@@ -151,7 +143,6 @@ impl TransportState {
     /// # Errors
     ///
     /// Will result in `Error::State` if not in transport mode.
-    #[must_use]
     pub fn receiving_nonce(&self) -> u64 {
         if self.initiator {
             self.cipherstates.1.nonce()
@@ -165,7 +156,6 @@ impl TransportState {
     /// # Errors
     ///
     /// Will result in `Error::State` if not in transport mode.
-    #[must_use]
     pub fn sending_nonce(&self) -> u64 {
         if self.initiator {
             self.cipherstates.0.nonce()
@@ -175,7 +165,6 @@ impl TransportState {
     }
 
     /// Check if this session was started with the "initiator" role.
-    #[must_use]
     pub fn is_initiator(&self) -> bool {
         self.initiator
     }
