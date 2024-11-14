@@ -5,7 +5,7 @@ use chacha20poly1305::{
     aead::{AeadInPlace, NewAead},
     ChaCha20Poly1305,
 };
-use curve25519_dalek::{edwards::EdwardsPoint, montgomery::MontgomeryPoint, scalar::Scalar};
+use curve25519_dalek::montgomery::MontgomeryPoint;
 #[cfg(feature = "pqclean_kyber1024")]
 use pqcrypto_kyber::kyber1024;
 #[cfg(feature = "pqclean_kyber1024")]
@@ -72,8 +72,8 @@ impl CryptoResolver for DefaultResolver {
 /// Wraps x25519-dalek.
 #[derive(Default)]
 struct Dh25519 {
-    privkey: Scalar,
-    pubkey:  [u8; 32],
+    privkey: [u8; 32],
+    pubkey: [u8; 32],
 }
 
 /// Wraps `aes-gcm`'s AES256-GCM implementation.
@@ -121,7 +121,7 @@ struct HashBLAKE2s {
 #[cfg(feature = "pqclean_kyber1024")]
 struct Kyber1024 {
     privkey: kyber1024::SecretKey,
-    pubkey:  kyber1024::PublicKey,
+    pubkey: kyber1024::PublicKey,
 }
 
 impl Random for OsRng {}
@@ -130,17 +130,9 @@ impl Dh25519 {
     fn derive_pubkey(&mut self) {
         // TODO: use `MontgomeryPoint::mul_base` in final v4 release of curve25519-dalek
         // See dalek-cryptography/curve25519-dalek#503
-        let point = EdwardsPoint::mul_base(&self.privkey).to_montgomery();
+        let point = MontgomeryPoint::mul_base_clamped(self.privkey);
         self.pubkey = point.to_bytes();
     }
-}
-
-fn clamp_scalar(mut scalar: [u8; 32]) -> Scalar {
-    scalar[0] &= 248;
-    scalar[31] &= 127;
-    scalar[31] |= 64;
-
-    Scalar::from_bits(scalar)
 }
 
 impl Dh for Dh25519 {
@@ -159,14 +151,14 @@ impl Dh for Dh25519 {
     fn set(&mut self, privkey: &[u8]) {
         let mut bytes = [0u8; 32];
         copy_slices!(privkey, bytes);
-        self.privkey = clamp_scalar(bytes);
+        self.privkey = bytes;
         self.derive_pubkey();
     }
 
     fn generate(&mut self, rng: &mut dyn Random) {
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
-        self.privkey = clamp_scalar(bytes);
+        self.privkey = bytes;
         self.derive_pubkey();
     }
 
@@ -175,13 +167,13 @@ impl Dh for Dh25519 {
     }
 
     fn privkey(&self) -> &[u8] {
-        self.privkey.as_bytes()
+        &self.privkey
     }
 
     fn dh(&self, pubkey: &[u8], out: &mut [u8]) -> Result<(), Error> {
         let mut pubkey_owned = [0u8; 32];
         copy_slices!(&pubkey[..32], pubkey_owned);
-        let result = (self.privkey * MontgomeryPoint(pubkey_owned)).to_bytes();
+        let result = MontgomeryPoint(pubkey_owned).mul_clamped(self.privkey).to_bytes();
         copy_slices!(result, out);
         Ok(())
     }
@@ -467,7 +459,7 @@ impl Hash for HashBLAKE2s {
 impl Default for Kyber1024 {
     fn default() -> Self {
         Kyber1024 {
-            pubkey:  kyber1024::PublicKey::from_bytes(&[0; kyber1024::public_key_bytes()]).unwrap(),
+            pubkey: kyber1024::PublicKey::from_bytes(&[0; kyber1024::public_key_bytes()]).unwrap(),
             privkey: kyber1024::SecretKey::from_bytes(&[0; kyber1024::secret_key_bytes()]).unwrap(),
         }
     }
@@ -621,7 +613,7 @@ mod tests {
         keypair.dh(&public, &mut output).unwrap();
         assert_eq!(
             hex::encode(output),
-                "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552"
+            "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552"
         );
     }
 
