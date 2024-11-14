@@ -1,5 +1,5 @@
 [package]
-name = "snow"
+name = "snow-pqkd"
 description = "A pure-rust implementation of the Noise Protocol Framework"
 homepage = "https://github.com/mcginty/snow"
 documentation = "https://docs.rs/snow/"
