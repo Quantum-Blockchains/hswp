@@ -3,7 +3,6 @@ use crate::{
     constants::{MAXDHLEN, MAXMSGLEN, TAGLEN},
     error::{Error, StateProblem},
     handshakestate::HandshakeState,
-    params::HandshakePattern,
     utils::Toggle,
 };
 use std::{convert::TryFrom, fmt};
@@ -15,10 +14,9 @@ use std::{convert::TryFrom, fmt};
 /// Also see: [the relevant Noise spec section](https://noiseprotocol.org/noise.html#the-handshakestate-object).
 pub struct TransportState {
     cipherstates: CipherStates,
-    pattern:      HandshakePattern,
-    dh_len:       usize,
-    rs:           Toggle<[u8; MAXDHLEN]>,
-    initiator:    bool,
+    dh_len: usize,
+    rs: Toggle<[u8; MAXDHLEN]>,
+    initiator: bool,
 }
 
 impl TransportState {
@@ -28,10 +26,9 @@ impl TransportState {
         }
 
         let dh_len = handshake.dh_len();
-        let HandshakeState { cipherstates, params, rs, initiator, .. } = handshake;
-        let pattern = params.handshake.pattern;
+        let HandshakeState { cipherstates, rs, initiator, .. } = handshake;
 
-        Ok(TransportState { cipherstates, pattern, dh_len, rs, initiator })
+        Ok(TransportState { cipherstates, dh_len, rs, initiator })
     }
 
     /// Get the remote party's static public key, if available.
@@ -54,9 +51,7 @@ impl TransportState {
     /// Will result in `Error::Input` if the size of the output exceeds the max message
     /// length in the Noise Protocol (65535 bytes).
     pub fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
-        if !self.initiator && self.pattern.is_oneway() {
-            return Err(StateProblem::OneWay.into());
-        } else if payload.len() + TAGLEN > MAXMSGLEN || payload.len() + TAGLEN > message.len() {
+        if payload.len() + TAGLEN > MAXMSGLEN || payload.len() + TAGLEN > message.len() {
             return Err(Error::Input);
         }
 
@@ -76,9 +71,6 @@ impl TransportState {
     ///
     /// Will result in `StateProblem::Exhausted` if the max nonce overflows.
     pub fn read_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
-        if self.initiator && self.pattern.is_oneway() {
-            return Err(StateProblem::OneWay.into());
-        }
         let cipher =
             if self.initiator { &mut self.cipherstates.1 } else { &mut self.cipherstates.0 };
 

@@ -10,8 +10,6 @@ pub use self::patterns::{
     SUPPORTED_HANDSHAKE_PATTERNS,
 };
 
-pub(crate) use self::patterns::{DhToken, HandshakeTokens, MessagePatterns, Token};
-
 /// I recommend you choose `Noise`.
 #[allow(missing_docs)]
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -139,14 +137,14 @@ impl FromStr for KemChoice {
 #[allow(missing_docs)]
 #[derive(PartialEq, Clone, Debug)]
 pub struct NoiseParams {
-    pub name:      String,
-    pub base:      BaseChoice,
+    pub name: String,
+    pub base: BaseChoice,
     pub handshake: HandshakeChoice,
-    pub dh:        DHChoice,
+    pub dh: DHChoice,
     #[cfg(feature = "hfs")]
-    pub kem:       Option<KemChoice>,
-    pub cipher:    CipherChoice,
-    pub hash:      HashChoice,
+    pub kem: Option<KemChoice>,
+    pub cipher: CipherChoice,
+    pub hash: HashChoice,
 }
 
 impl NoiseParams {

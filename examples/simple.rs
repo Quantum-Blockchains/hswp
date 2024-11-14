@@ -25,9 +25,9 @@ lazy_static! {
 
 #[cfg(any(feature = "default-resolver", feature = "ring-accelerated"))]
 fn main() {
-    let matches = App::new("simple").arg(arg!("-s --server 'Server mode'")).get_matches();
-
-    if matches.is_present("server") {
+    let server_mode =
+        std::env::args().next_back().map_or(true, |arg| arg == "-s" || arg == "--server");
+    if server_mode {
         run_server();
     } else {
         run_client();
@@ -37,13 +37,15 @@ fn main() {
 
 #[cfg(any(feature = "default-resolver", feature = "ring-accelerated"))]
 fn run_server() {
+    print!("kostia");
     let mut buf = vec![0u8; 65535];
 
+    let sae_id = "Test_1SAE";
+    let addr_pqkd = "http://172.16.0.154:8082";
     // Initialize our responder using a builder.
-    let builder: Builder<'_> = Builder::new(PARAMS.clone());
+    let builder: Builder<'_> = Builder::new(PARAMS.clone(), sae_id, addr_pqkd);
     let static_key = builder.generate_keypair().unwrap().private;
-    let mut noise =
-        builder.local_private_key(&static_key).psk(3, SECRET).build_responder().unwrap();
+    let mut noise = builder.local_private_key(&static_key).build_responder().unwrap();
 
     // Wait on our client's arrival...
     println!("listening on 127.0.0.1:9999");
@@ -52,11 +54,20 @@ fn run_server() {
     // <- e
     noise.read_message(&recv(&mut stream).unwrap(), &mut buf).unwrap();
 
+    noise.enc_key();
+
     // -> e, ee, s, es
     let len = noise.write_message(&[0u8; 0], &mut buf).unwrap();
     send(&mut stream, &buf[..len]);
 
     // <- s, se
+    noise.read_message(&recv(&mut stream).unwrap(), &mut buf).unwrap();
+
+    noise.dec_key();
+
+    let len = noise.write_message(&[0u8; 0], &mut buf).unwrap();
+    send(&mut stream, &buf[..len]);
+
     noise.read_message(&recv(&mut stream).unwrap(), &mut buf).unwrap();
 
     // Transition the state machine into transport mode now that the handshake is complete.
@@ -72,12 +83,13 @@ fn run_server() {
 #[cfg(any(feature = "default-resolver", feature = "ring-accelerated"))]
 fn run_client() {
     let mut buf = vec![0u8; 65535];
+    let sae_id = "Test_1SAE";
+    let addr_pqkd = "http://172.16.0.154:8082";
 
     // Initialize our initiator using a builder.
-    let builder: Builder<'_> = Builder::new(PARAMS.clone());
+    let builder: Builder<'_> = Builder::new(PARAMS.clone(), sae_id, addr_pqkd);
     let static_key = builder.generate_keypair().unwrap().private;
-    let mut noise =
-        builder.local_private_key(&static_key).psk(3, SECRET).build_initiator().unwrap();
+    let mut noise = builder.local_private_key(&static_key).build_initiator().unwrap();
 
     // Connect to our server, which is hopefully listening.
     let mut stream = TcpStream::connect("127.0.0.1:9999").unwrap();
@@ -90,7 +102,15 @@ fn run_client() {
     // <- e, ee, s, es
     noise.read_message(&recv(&mut stream).unwrap(), &mut buf).unwrap();
 
+    noise.dec_key();
+    noise.enc_key();
+
     // -> s, se
+    let len = noise.write_message(&[], &mut buf).unwrap();
+    send(&mut stream, &buf[..len]);
+
+    noise.read_message(&recv(&mut stream).unwrap(), &mut buf).unwrap();
+
     let len = noise.write_message(&[], &mut buf).unwrap();
     send(&mut stream, &buf[..len]);
 

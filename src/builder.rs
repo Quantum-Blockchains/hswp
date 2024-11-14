@@ -18,7 +18,7 @@ pub struct Keypair {
     /// The private asymmetric key
     pub private: Vec<u8>,
     /// The public asymmetric key
-    pub public:  Vec<u8>,
+    pub public: Vec<u8>,
 }
 
 impl PartialEq for Keypair {
@@ -48,13 +48,14 @@ impl PartialEq for Keypair {
 ///     .unwrap();
 /// ```
 pub struct Builder<'builder> {
-    params:   NoiseParams,
+    params: NoiseParams,
     resolver: BoxedCryptoResolver,
-    s:        Option<&'builder [u8]>,
-    e_fixed:  Option<&'builder [u8]>,
-    rs:       Option<&'builder [u8]>,
-    psks:     [Option<&'builder [u8]>; 10],
-    plog:     Option<&'builder [u8]>,
+    s: Option<&'builder [u8]>,
+    rs: Option<&'builder [u8]>,
+    psks: [Option<&'builder [u8]>; 10],
+    plog: Option<&'builder [u8]>,
+    sae_id: &'builder str,
+    addr_pqkd: &'builder str,
 }
 
 impl<'builder> Builder<'builder> {
@@ -63,43 +64,55 @@ impl<'builder> Builder<'builder> {
         feature = "default-resolver",
         not(any(feature = "ring-accelerated", feature = "libsodium-accelerated"))
     ))]
-    pub fn new(params: NoiseParams) -> Self {
+    pub fn new(params: NoiseParams, sae_id: &'builder str, addr_pqkd: &'builder str) -> Self {
         use crate::resolvers::DefaultResolver;
 
-        Self::with_resolver(params, Box::new(DefaultResolver::default()))
+        Self::with_resolver(params, Box::new(DefaultResolver::default()), sae_id, addr_pqkd)
     }
 
     /// Create a Builder with the ring resolver and default resolver as a fallback.
     #[cfg(all(not(feature = "libsodium-accelerated"), feature = "ring-accelerated"))]
-    pub fn new(params: NoiseParams) -> Self {
+    pub fn new(params: NoiseParams, sae_id: &'builder str, addr_pqkd: &'builder str) -> Self {
         use crate::resolvers::{DefaultResolver, FallbackResolver, RingResolver};
 
         Self::with_resolver(
             params,
             Box::new(FallbackResolver::new(Box::new(RingResolver), Box::new(DefaultResolver))),
+            sae_id,
+            addr_pqkd,
         )
     }
 
     /// Create a Builder with the ring resolver and default resolver as a fallback.
     #[cfg(all(not(feature = "ring-accelerated"), feature = "libsodium-accelerated"))]
-    pub fn new(params: NoiseParams) -> Self {
+    pub fn new(params: NoiseParams, sae_id: &'builder str, addr_pqkd: &'builder str) -> Self {
         use crate::resolvers::{DefaultResolver, FallbackResolver, SodiumResolver};
 
         Self::with_resolver(
             params,
             Box::new(FallbackResolver::new(Box::new(SodiumResolver), Box::new(DefaultResolver))),
+            sae_id,
+            addr_pqkd,
         )
     }
 
     /// Create a Builder with a custom crypto resolver.
-    pub fn with_resolver(params: NoiseParams, resolver: BoxedCryptoResolver) -> Self {
-        Builder { params, resolver, s: None, e_fixed: None, rs: None, plog: None, psks: [None; 10] }
-    }
-
-    /// Specify a PSK (only used with `NoisePSK` base parameter)
-    pub fn psk(mut self, location: u8, key: &'builder [u8]) -> Self {
-        self.psks[location as usize] = Some(key);
-        self
+    pub fn with_resolver(
+        params: NoiseParams,
+        resolver: BoxedCryptoResolver,
+        sae_id: &'builder str,
+        addr_pqkd: &'builder str,
+    ) -> Self {
+        Builder {
+            params,
+            resolver,
+            s: None,
+            rs: None,
+            plog: None,
+            psks: [None; 10],
+            sae_id,
+            addr_pqkd,
+        }
     }
 
     /// Your static private key (can be generated with [`generate_keypair()`]).
@@ -107,12 +120,6 @@ impl<'builder> Builder<'builder> {
     /// [`generate_keypair()`]: #method.generate_keypair
     pub fn local_private_key(mut self, key: &'builder [u8]) -> Self {
         self.s = Some(key);
-        self
-    }
-
-    #[doc(hidden)]
-    pub fn fixed_ephemeral_key_for_testing_only(mut self, key: &'builder [u8]) -> Self {
-        self.e_fixed = Some(key);
         self
     }
 
@@ -162,17 +169,11 @@ impl<'builder> Builder<'builder> {
             return Err(Prerequisite::RemotePublicKey.into());
         }
 
-        let rng = self.resolver.resolve_rng().ok_or(InitStage::GetRngImpl)?;
-        let cipher =
-            self.resolver.resolve_cipher(&self.params.cipher).ok_or(InitStage::GetCipherImpl)?;
-        let hash = self.resolver.resolve_hash(&self.params.hash).ok_or(InitStage::GetHashImpl)?;
         let mut s_dh = self.resolver.resolve_dh(&self.params.dh).ok_or(InitStage::GetDhImpl)?;
-        let mut e_dh = self.resolver.resolve_dh(&self.params.dh).ok_or(InitStage::GetDhImpl)?;
         let cipher1 =
             self.resolver.resolve_cipher(&self.params.cipher).ok_or(InitStage::GetCipherImpl)?;
         let cipher2 =
             self.resolver.resolve_cipher(&self.params.cipher).ok_or(InitStage::GetCipherImpl)?;
-        let handshake_cipherstate = CipherState::new(cipher);
         let cipherstates = CipherStates::new(CipherState::new(cipher1), CipherState::new(cipher2))?;
 
         let s = match self.s {
@@ -183,11 +184,6 @@ impl<'builder> Builder<'builder> {
             None => Toggle::off(s_dh),
         };
 
-        if let Some(fixed_k) = self.e_fixed {
-            (*e_dh).set(fixed_k);
-        }
-        let e = Toggle::off(e_dh);
-
         let mut rs_buf = [0u8; MAXDHLEN];
         let rs = match self.rs {
             Some(v) => {
@@ -196,8 +192,6 @@ impl<'builder> Builder<'builder> {
             },
             None => Toggle::off(rs_buf),
         };
-
-        let re = Toggle::off([0u8; MAXDHLEN]);
 
         let mut psks = [None::<[u8; PSKLEN]>; 10];
         for (i, psk) in self.psks.iter().enumerate() {
@@ -211,21 +205,8 @@ impl<'builder> Builder<'builder> {
             }
         }
 
-        let mut hs = HandshakeState::new(
-            rng,
-            handshake_cipherstate,
-            hash,
-            s,
-            e,
-            self.e_fixed.is_some(),
-            rs,
-            re,
-            initiator,
-            self.params,
-            psks,
-            self.plog.unwrap_or(&[]),
-            cipherstates,
-        )?;
+        let mut hs =
+            HandshakeState::new(s, rs, initiator, cipherstates, self.sae_id, self.addr_pqkd)?;
         Self::resolve_kem(self.resolver, &mut hs)?;
         Ok(hs)
     }

@@ -59,20 +59,12 @@ macro_rules! copy_slices {
     };
 }
 
-macro_rules! static_slice {
-    ($_type:ty: $($item:expr),*) => ({
-        static STATIC_SLICE: &'static [$_type] = &[$($item),*];
-        STATIC_SLICE
-    });
-}
-
 mod builder;
 mod cipherstate;
 mod constants;
 pub mod error;
 mod handshakestate;
 mod stateless_transportstate;
-mod symmetricstate;
 mod transportstate;
 mod utils;
 

@@ -5,20 +5,17 @@ use crate::constants::{MAXKEMCTLEN, MAXKEMPUBLEN, MAXKEMSSLEN};
 #[cfg(feature = "hfs")]
 use crate::types::Kem;
 use crate::{
-    cipherstate::{CipherState, CipherStates},
-    constants::{MAXDHLEN, MAXMSGLEN, PSKLEN, TAGLEN},
-    error::{Error, InitStage, StateProblem},
-    params::{DhToken, HandshakeTokens, MessagePatterns, NoiseParams, Token},
+    cipherstate::CipherStates,
+    constants::{MAXDHLEN, MAXMSGLEN, TAGLEN},
+    error::{Error, StateProblem},
     stateless_transportstate::StatelessTransportState,
-    symmetricstate::SymmetricState,
     transportstate::TransportState,
-    types::{Dh, Hash, Random},
+    types::Dh,
     utils::Toggle,
 };
-use std::{
-    convert::{TryFrom, TryInto},
-    fmt,
-};
+use base64::prelude::*;
+use pqkd;
+use std::{convert::TryInto, fmt};
 
 /// A state machine encompassing the handshake phase of a Noise session.
 ///
@@ -27,127 +24,50 @@ use std::{
 ///
 /// See: https://noiseprotocol.org/noise.html#the-handshakestate-object
 pub struct HandshakeState {
-    pub(crate) rng:              Box<dyn Random>,
-    pub(crate) symmetricstate:   SymmetricState,
-    pub(crate) cipherstates:     CipherStates,
-    pub(crate) s:                Toggle<Box<dyn Dh>>,
-    pub(crate) e:                Toggle<Box<dyn Dh>>,
-    pub(crate) fixed_ephemeral:  bool,
-    pub(crate) rs:               Toggle<[u8; MAXDHLEN]>,
-    pub(crate) re:               Toggle<[u8; MAXDHLEN]>,
-    pub(crate) initiator:        bool,
-    pub(crate) params:           NoiseParams,
-    pub(crate) psks:             [Option<[u8; PSKLEN]>; 10],
-    #[cfg(feature = "hfs")]
-    pub(crate) kem:              Option<Box<dyn Kem>>,
-    #[cfg(feature = "hfs")]
-    pub(crate) kem_re:           Option<[u8; MAXKEMPUBLEN]>,
-    pub(crate) my_turn:          bool,
-    pub(crate) message_patterns: MessagePatterns,
+    pub(crate) cipherstates: CipherStates,
+    pub(crate) s: Toggle<Box<dyn Dh>>,
+    pub(crate) rs: Toggle<[u8; MAXDHLEN]>,
+    pub(crate) initiator: bool,
+    pub(crate) my_turn: bool,
+    pub(crate) number_of_turn: usize,
     pub(crate) pattern_position: usize,
+    pub(crate) pqkd: pqkd::PqkdClient,
+    pub(crate) local_sae_id: Vec<u8>,
+    pub(crate) remote_sae_id: Option<Vec<u8>>,
+    pub(crate) local_key_id: Option<Vec<u8>>,
+    pub(crate) remote_key_id: Option<Vec<u8>>,
+    pub(crate) remote_enc_key: Option<Vec<u8>>,
 }
 
 impl HandshakeState {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        rng: Box<dyn Random>,
-        cipherstate: CipherState,
-        hasher: Box<dyn Hash>,
         s: Toggle<Box<dyn Dh>>,
-        e: Toggle<Box<dyn Dh>>,
-        fixed_ephemeral: bool,
         rs: Toggle<[u8; MAXDHLEN]>,
-        re: Toggle<[u8; MAXDHLEN]>,
         initiator: bool,
-        params: NoiseParams,
-        psks: [Option<[u8; PSKLEN]>; 10],
-        prologue: &[u8],
         cipherstates: CipherStates,
+        sae_id: &str,
+        addr_pqkd: &str,
     ) -> Result<HandshakeState, Error> {
-        if (s.is_on() && e.is_on() && s.pub_len() != e.pub_len())
-            || (s.is_on() && rs.is_on() && s.pub_len() > rs.len())
-            || (s.is_on() && re.is_on() && s.pub_len() > re.len())
-        {
-            return Err(InitStage::ValidateKeyLengths.into());
-        }
-
-        let tokens = HandshakeTokens::try_from(&params.handshake)?;
-
-        let mut symmetricstate = SymmetricState::new(cipherstate, hasher);
-
-        symmetricstate.initialize(&params.name);
-        symmetricstate.mix_hash(prologue);
-
-        let dh_len = s.pub_len();
-        if initiator {
-            for token in tokens.premsg_pattern_i {
-                symmetricstate.mix_hash(
-                    match *token {
-                        Token::S => &s,
-                        Token::E => &e,
-                        _ => unreachable!(),
-                    }
-                    .get()
-                    .ok_or(StateProblem::MissingKeyMaterial)?
-                    .pubkey(),
-                );
-            }
-            for token in tokens.premsg_pattern_r {
-                symmetricstate.mix_hash(
-                    &match *token {
-                        Token::S => &rs,
-                        Token::E => &re,
-                        _ => unreachable!(),
-                    }
-                    .get()
-                    .ok_or(StateProblem::MissingKeyMaterial)?[..dh_len],
-                );
-            }
-        } else {
-            for token in tokens.premsg_pattern_i {
-                symmetricstate.mix_hash(
-                    &match *token {
-                        Token::S => &rs,
-                        Token::E => &re,
-                        _ => unreachable!(),
-                    }
-                    .get()
-                    .ok_or(StateProblem::MissingKeyMaterial)?[..dh_len],
-                );
-            }
-            for token in tokens.premsg_pattern_r {
-                symmetricstate.mix_hash(
-                    match *token {
-                        Token::S => &s,
-                        Token::E => &e,
-                        _ => unreachable!(),
-                    }
-                    .get()
-                    .ok_or(StateProblem::MissingKeyMaterial)?
-                    .pubkey(),
-                );
-            }
-        }
+        let pqkd = pqkd::BuilderPqkdClient::with_addr(&addr_pqkd)
+            .unwrap()
+            .with_local_sae_id(&sae_id)
+            .build();
 
         Ok(HandshakeState {
-            rng,
-            symmetricstate,
             cipherstates,
             s,
-            e,
-            fixed_ephemeral,
             rs,
-            re,
             initiator,
-            params,
-            psks,
-            #[cfg(feature = "hfs")]
-            kem: None,
-            #[cfg(feature = "hfs")]
-            kem_re: None,
             my_turn: initiator,
-            message_patterns: tokens.msg_patterns,
+            number_of_turn: 5,
             pattern_position: 0,
+            pqkd,
+            local_sae_id: sae_id.as_bytes().to_vec(),
+            remote_sae_id: None,
+            local_key_id: None,
+            remote_key_id: None,
+            remote_enc_key: None,
         })
     }
 
@@ -155,43 +75,164 @@ impl HandshakeState {
         self.s.pub_len()
     }
 
-    #[cfg(feature = "hfs")]
-    pub(crate) fn set_kem(&mut self, kem: Box<dyn Kem>) {
-        self.kem = Some(kem);
-    }
-
-    fn dh(&self, token: &DhToken) -> Result<[u8; MAXDHLEN], Error> {
-        let mut dh_out = [0u8; MAXDHLEN];
-        let (dh, key) = match (token, self.is_initiator()) {
-            (DhToken::Ee, _) => (&self.e, &self.re),
-            (DhToken::Ss, _) => (&self.s, &self.rs),
-            (DhToken::Se, true) | (DhToken::Es, false) => (&self.s, &self.re),
-            (DhToken::Es, true) | (DhToken::Se, false) => (&self.e, &self.rs),
-        };
-        if !(dh.is_on() && key.is_on()) {
-            return Err(StateProblem::MissingKeyMaterial.into());
+    /// DOC
+    pub async fn enc_key(&mut self) -> Result<(), Error> {
+        if self.remote_sae_id.is_none() {
+            return Err(Error::Input);
         }
-        dh.dh(&**key, &mut dh_out)?;
-        Ok(dh_out)
+        let s = self.remote_sae_id.clone().unwrap();
+        let sae_id = std::str::from_utf8(s.as_slice()).unwrap();
+        let key = self.pqkd.enc_keys(sae_id).size(256).send().await.unwrap().keys();
+        let key_dec = BASE64_STANDARD.decode(key[0].key()).unwrap();
+        if self.is_initiator() {
+            self.cipherstates.0.set(key_dec.as_slice(), 0);
+        } else {
+            self.cipherstates.1.set(key_dec.as_slice(), 0);
+        }
+        let key_id = key[0].key_id();
+        self.local_key_id = Some(key_id.as_bytes().to_vec());
+        Ok(())
     }
 
-    /// This method will return `true` if the *previous* write payload was encrypted.
-    ///
-    /// See [Payload Security Properties](https://noiseprotocol.org/noise.html#payload-security-properties)
-    /// for more information on the specific properties of your chosen handshake pattern.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// let mut session = Builder::new("Noise_NN_25519_AESGCM_SHA256".parse()?)
-    ///     .build_initiator()?;
-    ///
-    /// // write message...
-    ///
-    /// assert!(session.was_write_payload_encrypted());
-    /// ```
-    pub fn was_write_payload_encrypted(&self) -> bool {
-        self.symmetricstate.has_key()
+    /// DOC
+    pub async fn dec_key(&mut self) -> Result<(), Error> {
+        if self.remote_sae_id.is_none() {
+            return Err(Error::Input);
+        }
+        if self.remote_key_id.is_none() {
+            return Err(Error::Input);
+        }
+        let sae_id = self.remote_sae_id.clone().unwrap();
+        let key_id = self.remote_key_id.clone().unwrap();
+        let sae_id = std::str::from_utf8(sae_id.as_slice()).unwrap();
+        let key_id = std::str::from_utf8(key_id.as_slice()).unwrap();
+        let key = self.pqkd.dec_keys(sae_id).key_id(key_id).send().await.unwrap().keys();
+        let key_dec = BASE64_STANDARD.decode(key[0].key()).unwrap();
+        if !self.is_initiator() {
+            self.cipherstates.0.set(key_dec.as_slice(), 0);
+        } else {
+            self.cipherstates.1.set(key_dec.as_slice(), 0);
+        }
+        Ok(())
+    }
+
+    fn _write_sae_id(&self, mut byte_index: usize, message: &mut [u8]) -> Result<usize, Error> {
+        // get local sae id from local pqkd
+        let local_sae_id = self.local_sae_id.clone();
+        // convert len of local sae id to 16 bit
+        let local_sae_id_len =
+            &[(local_sae_id.len() >> 8) as u8, (local_sae_id.len() & 0xff) as u8];
+        // check len of message
+        if byte_index + local_sae_id_len.len() + local_sae_id.len() > message.len() {
+            return Err(Error::Input);
+        }
+        message[byte_index..byte_index + local_sae_id_len.len()].copy_from_slice(local_sae_id_len);
+        byte_index += local_sae_id_len.len();
+        message[byte_index..byte_index + local_sae_id.len()]
+            .copy_from_slice(local_sae_id.as_slice());
+        byte_index += local_sae_id.len();
+        Ok(byte_index)
+    }
+
+    fn _write_key_id(&mut self, mut byte_index: usize, message: &mut [u8]) -> Result<usize, Error> {
+        if self.local_key_id.is_none() {
+            return Err(Error::Input);
+        }
+        let key_id = self.local_key_id.clone().unwrap();
+        let key_id = key_id.as_slice();
+        // convert len of generated key id to 16 bit
+        let key_id_len = &[(key_id.len() >> 8) as u8, (key_id.len() & 0xff) as u8];
+
+        // check len of message
+        if byte_index + key_id_len.len() + key_id.len() > message.len() {
+            return Err(Error::Input);
+        }
+        // write to message len of key id
+        message[byte_index..byte_index + key_id_len.len()].copy_from_slice(key_id_len);
+        byte_index += key_id_len.len();
+        message[byte_index..byte_index + key_id.len()].copy_from_slice(key_id);
+        byte_index += key_id.len();
+        Ok(byte_index)
+    }
+
+    fn _write_static_key(
+        &mut self,
+        mut byte_index: usize,
+        message: &mut [u8],
+    ) -> Result<usize, Error> {
+        if !self.s.is_on() {
+            return Err(StateProblem::MissingKeyMaterial.into());
+        } else if byte_index + self.s.pub_len() > message.len() {
+            return Err(Error::Input);
+        }
+
+        if self.local_key_id.is_none() {
+            return Err(Error::Input);
+        }
+        if self.is_initiator() {
+            byte_index +=
+                self.cipherstates.0.encrypt(self.s.pubkey(), &mut message[byte_index..])?;
+        } else {
+            byte_index +=
+                self.cipherstates.1.encrypt(self.s.pubkey(), &mut message[byte_index..])?;
+        }
+        Ok(byte_index)
+    }
+
+    fn _read_sae_id<'a>(&mut self, ptr_main: &'a [u8]) -> Result<&'a [u8], Error> {
+        let mut ptr = ptr_main;
+        if ptr.len() < 2 {
+            return Err(Error::Input);
+        }
+        let len_buf = &ptr[..2];
+        ptr = &ptr[2..];
+        let remote_sae_id_len = ((len_buf[0] as usize) << 8) + (len_buf[1] as usize);
+        if ptr.len() < remote_sae_id_len {
+            return Err(Error::Input);
+        }
+        let remote_sae_id = ptr[..remote_sae_id_len].to_vec();
+        self.remote_sae_id = Some(remote_sae_id);
+        ptr = &ptr[remote_sae_id_len..];
+        Ok(ptr)
+    }
+
+    fn _read_key_id<'a>(&mut self, ptr_main: &'a [u8]) -> Result<&'a [u8], Error> {
+        let mut ptr = ptr_main;
+        if ptr.len() < 2 {
+            return Err(Error::Input);
+        }
+
+        let len_buf = &ptr[..2];
+        ptr = &ptr[2..];
+        let remote_key_id_len = ((len_buf[0] as usize) << 8) + (len_buf[1] as usize);
+
+        if ptr.len() < remote_key_id_len {
+            return Err(Error::Input);
+        }
+
+        let remote_key_id = ptr[..remote_key_id_len].to_vec();
+        ptr = &ptr[remote_key_id_len..];
+        self.remote_key_id = Some(remote_key_id);
+        Ok(ptr)
+    }
+
+    fn _read_static_key<'a>(&mut self, ptr_main: &'a [u8]) -> Result<&'a [u8], Error> {
+        let mut ptr = ptr_main;
+        let dh_len = self.dh_len();
+        if ptr.len() < dh_len + TAGLEN {
+            return Err(Error::Input);
+        }
+        let data = &ptr[..dh_len + TAGLEN];
+        ptr = &ptr[dh_len + TAGLEN..];
+        self.remote_enc_key = Some(data.to_vec());
+        if !self.is_initiator() {
+            self.cipherstates.0.decrypt(data, &mut self.rs[..dh_len])?;
+        } else {
+            self.cipherstates.1.decrypt(data, &mut self.rs[..dh_len])?;
+        }
+        self.rs.enable();
+
+        Ok(ptr)
     }
 
     /// Construct a message from `payload` (and pending handshake tokens if in handshake state),
@@ -204,7 +245,7 @@ impl HandshakeState {
     /// Will result in `Error::Input` if the size of the output exceeds the max message
     /// length in the Noise Protocol (65535 bytes).
     pub fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
-        let checkpoint = self.symmetricstate.checkpoint();
+        // let checkpoint = self.symmetricstate.checkpoint();
         match self._write_message(payload, message) {
             Ok(res) => {
                 self.pattern_position += 1;
@@ -212,7 +253,7 @@ impl HandshakeState {
                 Ok(res)
             },
             Err(err) => {
-                self.symmetricstate.restore(checkpoint);
+                // self.symmetricstate.restore(checkpoint);
                 Err(err)
             },
         }
@@ -221,101 +262,55 @@ impl HandshakeState {
     fn _write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
         if !self.my_turn {
             return Err(StateProblem::NotTurnToWrite.into());
-        } else if self.pattern_position >= self.message_patterns.len() {
+        } else if self.pattern_position >= self.number_of_turn {
             return Err(StateProblem::HandshakeAlreadyFinished.into());
         }
-
         let mut byte_index = 0;
-        for token in self.message_patterns[self.pattern_position].iter() {
-            match token {
-                Token::E => {
-                    if byte_index + self.e.pub_len() > message.len() {
-                        return Err(Error::Input);
-                    }
-
-                    if !self.fixed_ephemeral {
-                        self.e.generate(&mut *self.rng);
-                    }
-                    let pubkey = self.e.pubkey();
-                    message[byte_index..byte_index + pubkey.len()].copy_from_slice(pubkey);
-                    byte_index += pubkey.len();
-                    self.symmetricstate.mix_hash(pubkey);
-                    if self.params.handshake.is_psk() {
-                        self.symmetricstate.mix_key(pubkey);
-                    }
-                    self.e.enable();
-                },
-                Token::S => {
-                    if !self.s.is_on() {
-                        return Err(StateProblem::MissingKeyMaterial.into());
-                    } else if byte_index + self.s.pub_len() > message.len() {
-                        return Err(Error::Input);
-                    }
-
-                    byte_index += self
-                        .symmetricstate
-                        .encrypt_and_mix_hash(self.s.pubkey(), &mut message[byte_index..])?;
-                },
-                Token::Psk(n) => match self.psks[*n as usize] {
-                    Some(psk) => {
-                        self.symmetricstate.mix_key_and_hash(&psk);
-                    },
-                    None => {
-                        return Err(StateProblem::MissingPsk.into());
-                    },
-                },
-                Token::Dh(t) => {
-                    let dh_out = self.dh(t)?;
-                    self.symmetricstate.mix_key(&dh_out[..self.dh_len()]);
-                },
-                #[cfg(feature = "hfs")]
-                Token::E1 => {
-                    let kem = self.kem.as_mut().ok_or(Error::Input)?;
-                    if kem.pub_len() > message.len() {
-                        return Err(Error::Input);
-                    }
-
-                    kem.generate(&mut *self.rng);
-                    byte_index += self
-                        .symmetricstate
-                        .encrypt_and_mix_hash(kem.pubkey(), &mut message[byte_index..])?;
-                },
-                #[cfg(feature = "hfs")]
-                Token::Ekem1 => {
-                    let kem = self.kem.as_mut().unwrap();
-                    let mut kem_output_buf = [0; MAXKEMSSLEN];
-                    let mut ciphertext_buf = [0; MAXKEMCTLEN];
-
-                    if kem.ciphertext_len() > message.len() {
-                        return Err(Error::Input);
-                    }
-
-                    let kem_output = &mut kem_output_buf[..kem.shared_secret_len()];
-                    let ciphertext = &mut ciphertext_buf[..kem.ciphertext_len()];
-                    let pubkey = &self.kem_re.as_ref().unwrap()[..kem.pub_len()];
-                    if kem.encapsulate(pubkey, kem_output, ciphertext).is_err() {
-                        return Err(Error::Kem);
-                    }
-
-                    byte_index += self.symmetricstate.encrypt_and_mix_hash(
-                        &ciphertext[..kem.ciphertext_len()],
-                        &mut message[byte_index..],
-                    )?;
-                    self.symmetricstate.mix_key(&kem_output[..kem.shared_secret_len()]);
-                },
+        // 0 <- SAE_ID
+        //   -> enc_keys
+        // 1 -> SAE_ID, KEY_ID
+        //   <- dec_keys
+        //   <- enc_keys
+        // 2 <- KEY_ID, S
+        //   -> dec_keys
+        // 3 -> S
+        match self.pattern_position {
+            0 => {
+                // SAE_ID
+                byte_index = self._write_sae_id(byte_index, message)?;
+            },
+            1 => {
+                // SAE_ID
+                byte_index = self._write_sae_id(byte_index, message)?;
+                // KEY_ID
+                byte_index = self._write_key_id(byte_index, message)?;
+            },
+            2 => {
+                // KEY_ID
+                byte_index = self._write_key_id(byte_index, message)?;
+            },
+            3 => {
+                //STATIC_KEY
+                byte_index = self._write_static_key(byte_index, message)?;
+            },
+            4 => {
+                // STATIC KEY
+                byte_index = self._write_static_key(byte_index, message)?;
+            },
+            _ => {},
+        }
+        if self.pattern_position == 3 || self.pattern_position == 4 {
+            if byte_index + payload.len() + TAGLEN > message.len() {
+                return Err(Error::Input);
+            }
+            if self.is_initiator() {
+                byte_index += self.cipherstates.0.encrypt(payload, &mut message[byte_index..])?;
+            } else {
+                byte_index += self.cipherstates.1.encrypt(payload, &mut message[byte_index..])?;
             }
         }
-
-        if byte_index + payload.len() + TAGLEN > message.len() {
-            return Err(Error::Input);
-        }
-        byte_index +=
-            self.symmetricstate.encrypt_and_mix_hash(payload, &mut message[byte_index..])?;
         if byte_index > MAXMSGLEN {
             return Err(Error::Input);
-        }
-        if self.pattern_position == (self.message_patterns.len() - 1) {
-            self.symmetricstate.split(&mut self.cipherstates.0, &mut self.cipherstates.1);
         }
         Ok(byte_index)
     }
@@ -331,7 +326,7 @@ impl HandshakeState {
     ///
     /// Will result in `StateProblem::Exhausted` if the max nonce count overflows.
     pub fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
-        let checkpoint = self.symmetricstate.checkpoint();
+        // let checkpoint = self.symmetricstate.checkpoint();
         match self._read_message(message, payload) {
             Ok(res) => {
                 self.pattern_position += 1;
@@ -339,7 +334,7 @@ impl HandshakeState {
                 Ok(res)
             },
             Err(err) => {
-                self.symmetricstate.restore(checkpoint);
+                // self.symmetricstate.restore(checkpoint);
                 Err(err)
             },
         }
@@ -350,124 +345,39 @@ impl HandshakeState {
             return Err(Error::Input);
         } else if self.my_turn {
             return Err(StateProblem::NotTurnToRead.into());
-        } else if self.pattern_position >= self.message_patterns.len() {
+        } else if self.pattern_position >= self.number_of_turn {
             return Err(StateProblem::HandshakeAlreadyFinished.into());
         }
-        let last = self.pattern_position == (self.message_patterns.len() - 1);
-
-        let dh_len = self.dh_len();
         let mut ptr = message;
-        for token in self.message_patterns[self.pattern_position].iter() {
-            match token {
-                Token::E => {
-                    if ptr.len() < dh_len {
-                        return Err(Error::Input);
-                    }
-                    self.re[..dh_len].copy_from_slice(&ptr[..dh_len]);
-                    ptr = &ptr[dh_len..];
-                    self.symmetricstate.mix_hash(&self.re[..dh_len]);
-                    if self.params.handshake.is_psk() {
-                        self.symmetricstate.mix_key(&self.re[..dh_len]);
-                    }
-                    self.re.enable();
-                },
-                Token::S => {
-                    let data = if self.symmetricstate.has_key() {
-                        if ptr.len() < dh_len + TAGLEN {
-                            return Err(Error::Input);
-                        }
-                        let temp = &ptr[..dh_len + TAGLEN];
-                        ptr = &ptr[dh_len + TAGLEN..];
-                        temp
-                    } else {
-                        if ptr.len() < dh_len {
-                            return Err(Error::Input);
-                        }
-                        let temp = &ptr[..dh_len];
-                        ptr = &ptr[dh_len..];
-                        temp
-                    };
-                    self.symmetricstate.decrypt_and_mix_hash(data, &mut self.rs[..dh_len])?;
-                    self.rs.enable();
-                },
-                Token::Psk(n) => match self.psks[*n as usize] {
-                    Some(psk) => {
-                        self.symmetricstate.mix_key_and_hash(&psk);
-                    },
-                    None => {
-                        return Err(StateProblem::MissingPsk.into());
-                    },
-                },
-                Token::Dh(t) => {
-                    let dh_out = self.dh(t)?;
-                    self.symmetricstate.mix_key(&dh_out[..self.dh_len()]);
-                },
-                #[cfg(feature = "hfs")]
-                Token::E1 => {
-                    let kem = self.kem.as_ref().ok_or(Error::Kem)?;
-                    let read_len = if self.symmetricstate.has_key() {
-                        kem.pub_len() + TAGLEN
-                    } else {
-                        kem.pub_len()
-                    };
-                    if ptr.len() < read_len {
-                        return Err(Error::Input);
-                    }
-                    let mut kem_re = [0; MAXKEMPUBLEN];
-                    self.symmetricstate
-                        .decrypt_and_mix_hash(&ptr[..read_len], &mut kem_re[..kem.pub_len()])?;
-                    self.kem_re = Some(kem_re);
-                    ptr = &ptr[read_len..];
-                },
-                #[cfg(feature = "hfs")]
-                Token::Ekem1 => {
-                    let kem = self.kem.as_ref().unwrap();
-                    let read_len = if self.symmetricstate.has_key() {
-                        kem.ciphertext_len() + TAGLEN
-                    } else {
-                        kem.ciphertext_len()
-                    };
-                    if ptr.len() < read_len {
-                        return Err(Error::Input);
-                    }
-                    let mut ciphertext_buf = [0; MAXKEMCTLEN];
-                    let ciphertext = &mut ciphertext_buf[..kem.ciphertext_len()];
-                    self.symmetricstate.decrypt_and_mix_hash(&ptr[..read_len], ciphertext)?;
-                    let mut kem_output_buf = [0; MAXKEMSSLEN];
-                    let kem_output = &mut kem_output_buf[..kem.shared_secret_len()];
-                    kem.decapsulate(ciphertext, kem_output).map_err(|_| Error::Kem)?;
-                    self.symmetricstate.mix_key(&kem_output[..kem.shared_secret_len()]);
-                    ptr = &ptr[read_len..];
-                },
+        match self.pattern_position {
+            0 => {
+                ptr = self._read_sae_id(ptr)?;
+            },
+            1 => {
+                ptr = self._read_sae_id(ptr)?;
+                ptr = self._read_key_id(ptr)?;
+            },
+            2 => {
+                ptr = self._read_key_id(ptr)?;
+            },
+            3 => {
+                ptr = self._read_static_key(ptr)?;
+            },
+            4 => {
+                ptr = self._read_static_key(ptr)?;
+            },
+            _ => {},
+        }
+        let payload_len = if self.pattern_position == 3 || self.pattern_position == 4 {
+            if !self.is_initiator() {
+                self.cipherstates.0.decrypt(ptr, payload)?
+            } else {
+                self.cipherstates.1.decrypt(ptr, payload)?
             }
-        }
-
-        self.symmetricstate.decrypt_and_mix_hash(ptr, payload)?;
-        if last {
-            self.symmetricstate.split(&mut self.cipherstates.0, &mut self.cipherstates.1);
-        }
-        let payload_len =
-            if self.symmetricstate.has_key() { ptr.len() - TAGLEN } else { ptr.len() };
+        } else {
+            0
+        };
         Ok(payload_len)
-    }
-
-    /// Set the preshared key at the specified location. It is up to the caller
-    /// to correctly set the location based on the specified handshake - Snow
-    /// won't stop you from placing a PSK in an unused slot.
-    ///
-    /// # Errors
-    ///
-    /// Will result in `Error::Input` if the PSK is not the right length or the location is out of bounds.
-    pub fn set_psk(&mut self, location: usize, key: &[u8]) -> Result<(), Error> {
-        if key.len() != PSKLEN || self.psks.len() <= location {
-            return Err(Error::Input);
-        }
-
-        let mut new_psk = [0u8; PSKLEN];
-        new_psk.copy_from_slice(key);
-        self.psks[location as usize] = Some(new_psk);
-
-        Ok(())
     }
 
     /// Get the remote party's static public key, if available.
@@ -480,13 +390,6 @@ impl HandshakeState {
         self.rs.get().map(|rs| &rs[..self.dh_len()])
     }
 
-    /// Get the handshake hash.
-    ///
-    /// Returns a slice of length `Hasher.hash_len()` (i.e. HASHLEN for the chosen Hash function).
-    pub fn get_handshake_hash(&self) -> &[u8] {
-        self.symmetricstate.handshake_hash()
-    }
-
     /// Check if this session was started with the "initiator" role.
     pub fn is_initiator(&self) -> bool {
         self.initiator
@@ -494,7 +397,7 @@ impl HandshakeState {
 
     /// Check if the handshake is finished and `into_transport_mode()` can now be called.
     pub fn is_handshake_finished(&self) -> bool {
-        self.pattern_position == self.message_patterns.len()
+        self.pattern_position == self.number_of_turn
     }
 
     /// Check whether it is our turn to send in the handshake state machine
