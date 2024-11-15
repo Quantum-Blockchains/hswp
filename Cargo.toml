@@ -24,7 +24,7 @@ default-resolver = [
   "sha2",
   "curve25519-dalek",
 ]
-nightly = ["blake2/simd_opt", "subtle/nightly"]
+nightly = ["blake2/simd_opt"]
 ring-resolver = ["ring"]
 ring-accelerated = ["ring-resolver", "default-resolver"]
 libsodium-resolver = ["sodiumoxide", "byteorder"]
@@ -49,7 +49,6 @@ travis-ci = { repository = "mcginty/snow", branch = "master" }
 
 [dependencies]
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
-subtle = "2.0.0"
 pqkd = { version = "0.1.0", git = "https://github.com/Quantum-Blockchains/pqkd-client-rust.git" }
 base64 = "0.22.1"
 
