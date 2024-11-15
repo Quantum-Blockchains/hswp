@@ -5,7 +5,7 @@ use chacha20poly1305::{
     aead::{AeadInPlace, NewAead},
     ChaCha20Poly1305,
 };
-use curve25519_dalek::montgomery::MontgomeryPoint;
+use curve25519_dalek::{edwards::EdwardsPoint, montgomery::MontgomeryPoint, scalar::Scalar};
 #[cfg(feature = "pqclean_kyber1024")]
 use pqcrypto_kyber::kyber1024;
 #[cfg(feature = "pqclean_kyber1024")]
@@ -72,7 +72,7 @@ impl CryptoResolver for DefaultResolver {
 /// Wraps x25519-dalek.
 #[derive(Default)]
 struct Dh25519 {
-    privkey: [u8; 32],
+    privkey: Scalar,
     pubkey: [u8; 32],
 }
 
@@ -130,9 +130,16 @@ impl Dh25519 {
     fn derive_pubkey(&mut self) {
         // TODO: use `MontgomeryPoint::mul_base` in final v4 release of curve25519-dalek
         // See dalek-cryptography/curve25519-dalek#503
-        let point = MontgomeryPoint::mul_base_clamped(self.privkey);
+        let point = EdwardsPoint::mul_base(&self.privkey).to_montgomery();
         self.pubkey = point.to_bytes();
     }
+}
+
+fn clamp_scalar(mut scalar: [u8; 32]) -> Scalar {
+    scalar[0] &= 248;
+    scalar[31] &= 127;
+    scalar[31] |= 64;
+    Scalar::from_bits(scalar)
 }
 
 impl Dh for Dh25519 {
@@ -151,14 +158,14 @@ impl Dh for Dh25519 {
     fn set(&mut self, privkey: &[u8]) {
         let mut bytes = [0u8; 32];
         copy_slices!(privkey, bytes);
-        self.privkey = bytes;
+        self.privkey = clamp_scalar(bytes);
         self.derive_pubkey();
     }
 
     fn generate(&mut self, rng: &mut dyn Random) {
         let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
-        self.privkey = bytes;
+        self.privkey = clamp_scalar(bytes);
         self.derive_pubkey();
     }
 
@@ -167,13 +174,13 @@ impl Dh for Dh25519 {
     }
 
     fn privkey(&self) -> &[u8] {
-        &self.privkey
+        self.privkey.as_bytes()
     }
 
     fn dh(&self, pubkey: &[u8], out: &mut [u8]) -> Result<(), Error> {
         let mut pubkey_owned = [0u8; 32];
         copy_slices!(&pubkey[..32], pubkey_owned);
-        let result = MontgomeryPoint(pubkey_owned).mul_clamped(self.privkey).to_bytes();
+        let result = (self.privkey * MontgomeryPoint(pubkey_owned)).to_bytes();
         copy_slices!(result, out);
         Ok(())
     }
