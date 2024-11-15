@@ -1330,7 +1330,7 @@ checksum = "94e851c7654eed9e68d7d27164c454961a616cf8c203d500607ef22c737b51bb"
 [[package]]
 name = "pqkd"
 version = "0.1.0"
-source = "git+https://github.com/Quantum-Blockchains/pqkd-client-rust.git#69c4405d646888725b293345f5e47848feb16444"
+source = "git+https://github.com/Quantum-Blockchains/pqkd-client-rust.git#5f223e0acad9e4a4ad3d257cb4ef487875e9f9cf"
 dependencies = [
  "reqwest",
  "serde",
