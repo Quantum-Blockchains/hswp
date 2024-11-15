@@ -1,8 +1,8 @@
 [package]
-name = "qhs"
-description = ""
-homepage = "https://github.com/Quantum-Blockchains/qhs"
-repository = "https://github.com/Quantum-Blockchains/qhs"
+name = "hswp"
+description = "pqkd handshake"
+homepage = "https://github.com/Quantum-Blockchains/hswp"
+repository = "https://github.com/Quantum-Blockchains/hswp"
 version = "0.1.0"
 authors = ["Quantum-Blockchains"]
 license = "Apache-2.0 OR MIT"
@@ -48,8 +48,8 @@ travis-ci = { repository = "mcginty/snow", branch = "master" }
 [dependencies]
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
 subtle = "2.4"
-pqkd = { version = "0.1.0", git = "https://github.com/Quantum-Blockchains/pqkd-client-rust.git" }
 base64 = "0.22.1"
+pqkd = "0.1.0"
 
 # default crypto provider
 aes-gcm = { version = "0.9", optional = true }
