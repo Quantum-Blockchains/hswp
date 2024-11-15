@@ -49,7 +49,7 @@ travis-ci = { repository = "mcginty/snow", branch = "master" }
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
 subtle = "2.4"
 base64 = "0.22.1"
-pqkd = "0.1.0"
+pqkd = { version = "0.1.0", git = "https://github.com/Quantum-Blockchains/pqkd-client-rust.git" }
 
 # default crypto provider
 aes-gcm = { version = "0.9", optional = true }

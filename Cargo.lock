@@ -1360,8 +1360,7 @@ checksum = "94e851c7654eed9e68d7d27164c454961a616cf8c203d500607ef22c737b51bb"
 [[package]]
 name = "pqkd"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8fb59a4071fa56989a961a503113ecabaeec22ff7fa0a2e848825f31efec1ce"
+source = "git+https://github.com/Quantum-Blockchains/pqkd-client-rust.git#545cba5bc4c14ea6b50834c7711180e15a83e1ba"
 dependencies = [
  "reqwest",
  "serde",
