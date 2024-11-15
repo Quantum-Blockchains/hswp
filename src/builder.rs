@@ -9,6 +9,7 @@ use crate::{
     resolvers::{BoxedCryptoResolver, CryptoResolver},
     utils::Toggle,
 };
+use subtle::ConstantTimeEq;
 
 /// A keypair object returned by [`Builder::generate_keypair()`]
 ///
@@ -18,6 +19,15 @@ pub struct Keypair {
     pub private: Vec<u8>,
     /// The public asymmetric key
     pub public: Vec<u8>,
+}
+
+impl PartialEq for Keypair {
+    fn eq(&self, other: &Keypair) -> bool {
+        let priv_eq = self.private.ct_eq(&other.private);
+        let pub_eq = self.public.ct_eq(&other.public);
+
+        (priv_eq & pub_eq).into()
+    }
 }
 
 /// Generates a [`HandshakeState`] and also validates that all the prerequisites for

@@ -1782,6 +1782,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sodiumoxide",
+ "subtle",
  "x25519-dalek",
 ]
 
