@@ -1,3 +1,4 @@
+use crate::constants::CIPHERKEYLEN;
 #[cfg(feature = "risky-raw-split")]
 use crate::constants::{CIPHERKEYLEN, MAXHASHLEN};
 #[cfg(feature = "hfs")]
@@ -77,37 +78,85 @@ impl HandshakeState {
 
     /// DOC
     pub async fn enc_key(&mut self) -> Result<(), Error> {
-        if self.remote_sae_id.is_none() {
+        let sae_id_bytes = self.remote_sae_id.as_ref().ok_or(Error::Input)?;
+        let sae_id = std::str::from_utf8(sae_id_bytes).map_err(|_| Error::Input)?;
+        
+        let resp = self
+            .pqkd
+            .enc_keys(sae_id)
+            .size(256)
+            .send()
+            .await
+            .map_err(|_| Error::Input)?; // albo nowy Error::External
+
+        let keys = resp.keys();
+        let first = keys.get(0).ok_or(Error::Input)?;
+
+        let key_dec = BASE64_STANDARD
+            .decode(first.key())
+            .map_err(|_| Error::Input)?;
+
+        if key_dec.len() != CIPHERKEYLEN {
             return Err(Error::Input);
         }
-        let s = self.remote_sae_id.clone().unwrap();
-        let sae_id = std::str::from_utf8(s.as_slice()).unwrap();
-        let key = self.pqkd.enc_keys(sae_id).size(256).send().await.unwrap().keys();
-        let key_dec = BASE64_STANDARD.decode(key[0].key()).unwrap();
+
+        // if self.remote_sae_id.is_none() {
+        //     return Err(Error::Input);
+        // }
+        // let s = self.remote_sae_id.clone().unwrap();
+        // let sae_id = std::str::from_utf8(s.as_slice()).unwrap();
+        // let key = self.pqkd.enc_keys(sae_id).size(256).send().await.unwrap().keys();
+        // let key_dec = BASE64_STANDARD.decode(key[0].key()).unwrap();
         if self.is_initiator() {
             self.cipherstates.0.set(key_dec.as_slice(), 0);
         } else {
             self.cipherstates.1.set(key_dec.as_slice(), 0);
         }
-        let key_id = key[0].key_id();
-        self.local_key_id = Some(key_id.as_bytes().to_vec());
+        self.local_key_id = Some(first.key_id().as_bytes().to_vec());
+        // let key_id = key[0].key_id();
+        // self.local_key_id = Some(key_id.as_bytes().to_vec());
         Ok(())
     }
 
     /// DOC
     pub async fn dec_key(&mut self) -> Result<(), Error> {
-        if self.remote_sae_id.is_none() {
+        let sae_id_bytes = self.remote_sae_id.as_ref().ok_or(Error::Input)?;
+        let key_id_bytes = self.remote_key_id.as_ref().ok_or(Error::Input)?;
+
+        let sae_id = std::str::from_utf8(sae_id_bytes).map_err(|_| Error::Input)?;
+        let key_id = std::str::from_utf8(key_id_bytes).map_err(|_| Error::Input)?;
+        
+        let resp = self
+            .pqkd
+            .dec_keys(sae_id)
+            .key_id(key_id)
+            .send()
+            .await
+            .map_err(|_| Error::Input)?; // albo nowy Error::External
+        
+        let keys = resp.keys();
+        let first = keys.get(0).ok_or(Error::Input)?;
+
+        let key_dec = BASE64_STANDARD
+            .decode(first.key())
+            .map_err(|_| Error::Input)?;
+
+        if key_dec.len() != CIPHERKEYLEN {
             return Err(Error::Input);
         }
-        if self.remote_key_id.is_none() {
-            return Err(Error::Input);
-        }
-        let sae_id = self.remote_sae_id.clone().unwrap();
-        let key_id = self.remote_key_id.clone().unwrap();
-        let sae_id = std::str::from_utf8(sae_id.as_slice()).unwrap();
-        let key_id = std::str::from_utf8(key_id.as_slice()).unwrap();
-        let key = self.pqkd.dec_keys(sae_id).key_id(key_id).send().await.unwrap().keys();
-        let key_dec = BASE64_STANDARD.decode(key[0].key()).unwrap();
+        
+        // if self.remote_sae_id.is_none() {
+        //     return Err(Error::Input);
+        // }
+        // if self.remote_key_id.is_none() {
+        //     return Err(Error::Input);
+        // }
+        // let sae_id = self.remote_sae_id.clone().unwrap();
+        // let key_id = self.remote_key_id.clone().unwrap();
+        // let sae_id = std::str::from_utf8(sae_id.as_slice()).unwrap();
+        // let key_id = std::str::from_utf8(key_id.as_slice()).unwrap();
+        // let key = self.pqkd.dec_keys(sae_id).key_id(key_id).send().await.unwrap().keys();
+        // let key_dec = BASE64_STANDARD.decode(key[0].key()).unwrap();
         if !self.is_initiator() {
             self.cipherstates.0.set(key_dec.as_slice(), 0);
         } else {
